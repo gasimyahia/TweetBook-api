@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<doc>
+    <assembly>
+        <name>TweetBook4</name>
+    </assembly>
+    <members>
+        <member name="M:TweetBook4.Controllers.v1.TagsController.GetAll">
+            <summary>
+            returns all tags in the system
+            </summary>
+            <response code="200">return all tags in the system</response>
+        </member>
+        <member name="M:TweetBook4.Controllers.v1.TagsController.create(TweetBook4.Contracts.v1.Tags.Request.TagRequest)">
+            <summary>
+            returns all tags in the system
+            </summary>
+            <response code="200">create tag in the system</response>
+            <response code="400">Unable to create tag due to validation error</response>
+        </member>
+    </members>
+</doc>

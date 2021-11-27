@@ -1,82 +1,180 @@
 ﻿
+using AutoMapper;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
+using TweetBook4.Cache;
+using TweetBook4.Contracts.v1.Posts;
 using TweetBook4.Contracts.v1.Requests;
+using TweetBook4.Contracts.v1.Requests.Queries;
 using TweetBook4.Contracts.v1.Responses;
+using TweetBook4.Contracts.v1.Tags.Response;
 using TweetBook4.Contracts.vi;
 using TweetBook4.Domain;
+using TweetBook4.Extensions;
+using TweetBook4.Helpers;
 using TweetBook4.Service;
 
 namespace TweetBook4.Controllers.v1
 {
+    // to make class authenitcatable
+    [Authorize(AuthenticationSchemes = JwtBearerDefaults.AuthenticationScheme)]
     public class PostsController : Controller
     {
-
-        private IPostService _postService;
-        public PostsController(IPostService postService)
+        private readonly IPostService _postService;
+        private readonly IMapper _mapper;
+        private readonly IUriService _uriService;
+        public PostsController(IPostService postService,IMapper mapper,IUriService uriService)
         {
             _postService = postService;
+            _mapper = mapper;
+            _uriService = uriService;
         }
 
 
         [HttpGet(ApiRoutes.posts.getAll)]
-        public IActionResult GetPosts()
+        //[Cached(600)]
+        public async Task<IActionResult> GetPosts([FromQuery] PostQuery postQuery, [FromQuery]PaginationQuery paginationQuery)
         {
-            return Ok(_postService.GetPosts());
+            try
+            {
+                var paginationFilter = _mapper.Map<PaginationFilter>(paginationQuery);
+                var posts = await _postService.GetPostsAsync(postQuery,paginationFilter);
+                var postsResponse = _mapper.Map<List<PostResponse>>(posts);
+
+                if(paginationFilter==null|| paginationFilter.PageNumber<1 || paginationFilter.PageNumber < 1)
+                {
+                    return Ok(new PagedResponse<PostResponse>(postsResponse));
+                }
+
+                var paginationResponse = PaginationHelpers.CreatePaginationResponse(_uriService, paginationFilter, postsResponse);
+
+                return Ok(paginationResponse);
+            }
+            catch (Exception)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, "Error retrieving data from the database");
+            }
         }
 
         [HttpGet(ApiRoutes.posts.Get)]
-        public IActionResult Get([FromRoute]Guid postid)
+        //[Cached(600)]
+        public async Task<IActionResult> Get([FromRoute] Guid postid)
         {
-            var post = _postService.GetPostById(postid);
-            if (post == null)
-                return NotFound();
-            return Ok(post);
+            try
+            {
+                var post = await _postService.GetPostByIdAsync(postid);
+                if (post == null)
+                    return NotFound();
+                return Ok(new Response<PostResponse>(_mapper.Map<PostResponse>(post)));
+            }
+            catch (Exception)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, "Error retrieving data from the database");
+            }
         }
 
 
         [HttpPut(ApiRoutes.posts.Update)]
-        public IActionResult Update([FromRoute] Guid postid,UpdatePostRequest request)
+        public async Task<IActionResult> Update([FromRoute] Guid postid, UpdatePostRequest request)
         {
-            var post = new Post
+            try
             {
-                id = postid,
-                name = request.name
-            };
-            var update = _postService.UpdatePost(post);
-            if (update)
-                return Ok(post);
+                var UserOwnsPost = await _postService.UserOwnsPostAsync(postid, HttpContext.GetUserId());
+                if (!UserOwnsPost)
+                {
+                    return BadRequest(new { error = "You do not own this post" });
+                }
 
-            return NotFound();
-            
+                var updatedPost = await _postService.UpdatePostAsync(postid, request);
+                if (updatedPost != null)
+                    return Ok(new Response<PostResponse>(_mapper.Map<PostResponse>(updatedPost)));
+                return null;
+            }
+            catch (Exception)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, "Error retrieving data from the database");
+            }
         }
 
 
         [HttpPost(ApiRoutes.posts.Create)]
-        public IActionResult Create([FromBody] CreatePostRequest postRequest)
+        public async Task<IActionResult> Create([FromBody] PostRequest postRequest)
         {
-            var post = new Post { id = postRequest.id };
-            if (post.id != Guid.Empty)
-                post.id = Guid.NewGuid();
+            try
+            {
+                var newPostId = Guid.NewGuid();
+                var useid = HttpContext.GetUserId();
+                var tags = postRequest.postTags.Select(x => new Tag { id = Guid.NewGuid(), name = x.Name, createdBy = useid, createdOn = DateTime.Now }).ToList();
+                var post = new Post
+                {
+                    id = newPostId,
+                    name = postRequest.Name,
+                    UserId = useid,
+                    Tags = tags,
+                    PostTags = tags.Select(x => new PostTag { PostId = newPostId, TagId = x.id }).ToList()
+                };
 
-            _postService.GetPosts().Add(post);
+                var result = await _postService.CreatePostAsync(post);
+                // to get url 
+                //var baseUrl = $"{HttpContext.Request.Scheme}://{HttpContext.Request.Host.ToUriComponent()}";
+                //var locationUri = baseUrl + "/" + ApiRoutes.posts.Get.Replace("{postid}", post.id.ToString());
 
-            var baseUrl = $"{HttpContext.Request.Scheme}://{HttpContext.Request.Host.ToUriComponent()}";
-            var locationUri = baseUrl + "/" + ApiRoutes.posts.Get.Replace("{postid}", post.id.ToString());
+                var locationUri = _uriService.GetPostUri(post.id.ToString());
 
-            var response = new CreatePostResponse { id = post.id };
-            return Created(locationUri,response);
+
+                var response = new Response<PostResponse>(_mapper.Map<PostResponse>(result));
+                return Created(locationUri, response);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, "Error retrieving data from the database");
+            }
         }
 
         [HttpDelete(ApiRoutes.posts.Delete)]
-        public IActionResult Delete([FromRoute]Guid postid)
+        public async Task<IActionResult> Delete([FromRoute] Guid postid)
         {
-            var deleted = _postService.DeletePost(postid);
-            if (deleted)
-                return NoContent();
-            return NotFound();
+            try
+            {
+                var UserOwnsPost = await _postService.UserOwnsPostAsync(postid, HttpContext.GetUserId());
+                if (!UserOwnsPost)
+                {
+                    return BadRequest(new { error = "You do not own this post" });
+                }
+                var deleted = await _postService.DeletePostAsync(postid);
+                if (deleted)
+                    return NoContent();
+                return NotFound();
+            }
+            catch (Exception)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, "Error retrieving data from the database");
+            }
+        }
+
+        [HttpGet(ApiRoutes.posts.Search)]
+        public async Task<IActionResult> Search(string name, Guid? postid, string userId)
+        {
+            try
+            {
+                var posts = await _postService.SearchAsync(name, postid, userId);
+                if (posts.Any())
+                {
+                    var postsResponse =new Response<List<PostResponse>>( _mapper.Map<List<PostResponse>>(posts));
+                    return Ok(postsResponse);
+                }
+                return NotFound();
+            }
+            catch (Exception)
+            {
+                return StatusCode(StatusCodes.Status500InternalServerError, "Error retrieving data from the database");
+            }
         }
     }
 }

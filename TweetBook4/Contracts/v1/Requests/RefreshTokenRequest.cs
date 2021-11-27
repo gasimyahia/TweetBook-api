@@ -5,8 +5,10 @@ using System.Threading.Tasks;
 
 namespace TweetBook4.Contracts.v1.Requests
 {
-    public class CreatePostRequest
+    public class RefreshTokenRequest
     {
-        public Guid id { get; set; }
+        public string Token { get; set; }
+
+        public string RefreshToken { get; set; }
     }
 }

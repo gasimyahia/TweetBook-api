@@ -7,4 +7,4 @@ build_property.PublishSingleFile =
 build_property.IncludeAllContentForSelfExtract = 
 build_property._SupportedPlatformList = Android,iOS,Linux,macOS,Windows
 build_property.RootNamespace = TweetBook4
-build_property.ProjectDir = E:\gasim\asp-dotnet\TweetBook4\TweetBook4\
+build_property.ProjectDir = E:\gasim\other\asp\TweetBook-api\TweetBook4\
